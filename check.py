@@ -1,35 +1,59 @@
-import requests, json, os, sys
+import requests, json, os, time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
-URL = "https://egy.voxcinemas.com/home"
 TOKEN = os.environ["TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 FILE = "seen.json"
 
-html = requests.get(URL, timeout=20, headers={"User-Agent": "Mozilla/5.0"}).text
+URL = "https://egy.voxcinemas.com/movies/whatson"
+SKIP = ["/movies/whatson", "/movies/comingsoon"]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+html = None
+for attempt in range(3):
+    try:
+        html = requests.get(URL, timeout=(10, 40), headers=HEADERS).text
+        break
+    except requests.exceptions.RequestException as e:
+        print(f"محاولة {attempt + 1} فشلت: {e}")
+        time.sleep(5)
+
+if html is None:
+    print("الموقع مش راضي يفتح، هنحاول في التشغيل الجاي")
+    raise SystemExit
+
 soup = BeautifulSoup(html, "html.parser")
 
 movies = {}
-for a in soup.select('a[href*="/movie-details/"]'):
-    name = a.get("title") or a.get_text(strip=True)
+for a in soup.select('a[href^="/movies/"]'):
+    href = a["href"].split("?")[0].split("#")[0].rstrip("/")
+    if any(href.endswith(s) for s in SKIP):
+        continue
+    name = a.get("title") or a.get_text(" ", strip=True)
     if name:
-        movies[a["href"]] = name
+        movies[urljoin(URL, href)] = name
 
 print("لقيت", len(movies), "فيلم")
 
 if not movies:
-    sys.exit("مفيش أفلام اتقرأت")
+    print("مفيش أفلام اتقرأت")
+    raise SystemExit
 
 seen = set(json.load(open(FILE))) if os.path.exists(FILE) else None
 
 if seen is not None:
-    for href in movies.keys() - seen:
+    for link in movies.keys() - seen:
         requests.get(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             params={
                 "chat_id": CHAT_ID,
-                "text": f"فيلم جديد نزل:\n{movies[href]}\n{urljoin(URL, href)}",
+                "text": f"فيلم جديد نزل في فوكس:\n{movies[link]}\n{link}",
             },
         )
 
